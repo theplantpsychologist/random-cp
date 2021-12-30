@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>testing</title>
+</head>
+<body>
+    <h1>Random Cp Generator</h1>
+    <div>
+        <p>Grid size: (recommended 4-32)</p>
+        <input type="text" id="gridsize" value="6">
+        <br>
+        <p>Initial crease density (recommended 0.05-0.5)</p><input type="text" id="creasedensity" value = "0.4">
+    </div>
+    <br>
+    <canvas id="square" width="400" height = "400"></canvas>
+    <script src="paper-core.js"></script>
+    <script type="text/javascript" data-paper-ignore="true">
+        paper.setup(document.getElementById("square"))
+
+        var border = new paper.Path.Rectangle(0,0,400,400);
+        border.strokeColor = 'black';
+        border.strokeWidth = 4;
+
+        vertices = [] 
+        creases = []
+        class Vertex {
+            constructor(x,y){
+                this.x = x
+                this.y = y
+                this.connectedCreases = []
+            }
+            getCreasesAsVectors(){
+                //takes the creases connected to this vertex and returns them as a list of vectors with this vertex as origin
+                //useful for flat foldability calculations, finding angles and whatnot
+                this.vectors = []
+                for(var i = 0; i<this.connectedCreases.length;i++){
+                    if(this.connectedCreases[i].vertices[1]==this){ 
+                        var otherp = this.connectedCreases[i].vertices[0]
+                    } else {var otherp = this.connectedCreases[i].vertices[1]}
+                    this.vectors.push([otherp.x-this.x,otherp.y-this.y])
+                }
+            }
+        }
+        class Crease {
+            constructor(v1,v2){
+                this.vertices = [v1,v2] //this way we can check if a vertex is in this list to see if they intersect
+                this.mv = 'red' //by default, change later
+            }
+        }
+        
+        function generate(){
+            creases = []
+            vertices = []
+            grid = parseInt(gridsize.value)
+            density = parseFloat(creasedensity.value)
+            if(density>1 || density<0 || grid<1){
+                alert("Something went wrong. Please remember: \n   The grid size must be an integer greater than or equal to 1 \n   The density must be a decimal between 0 and 1 (inclusive)")
+                return
+            }
+          
+            step1()
+            step2()
+            display() //crease data is global
+        }
+
+        function step1(){
+            /*
+            Generate a seed of random creases from which the rest of the cp will be drawn to accomodate.
+            The number of initial creases drawn is based on the density input.
+            The creases are stored in the creases list, and the vertices in the vertices list.
+            Each vertex will keep track of all the creases attached to it.
+            Of all the possible creases, the chance of it being diagonal is n^2/(3n^2-2n) where n is the grid size
+            First decide whether the random crease will be diagonal or lateral
+            if diagonal, pick 2 random numbers, both from [0,n-1] and those will be the coords of the diagonal
+            if lateral, pick random from [1,n-1] to decide line, and [1,n] to decide segment of the line, then [0,1] to decide horizontal or vertical
+            if this crease is already added, generate again.
+            */
+            initialCreaseNumber = Math.floor(density*(3*grid**2-2*grid))
+            mainloop: for(var i = 0; i< initialCreaseNumber; i++){
+                if (Math.random()<grid**2/(3*grid**2-2*grid)){
+                    //generate a random diagonal
+                    a = Math.floor(Math.random()*(grid))
+                    b = Math.floor(Math.random()*(grid))
+                    if((a+b)%2==0){
+                        //creates diagonal with slope of 1
+                        v1 = new Vertex(a,b)
+                        v2 = new Vertex(a+1,b+1)
+                        //crease = new Crease(v1,v2)
+                    } else {
+                        //creates diagonal with slope of -1
+                        v1 = new Vertex(a+1,b)
+                        v2 = new Vertex(a,b+1)
+                    }
+                } else {
+                    //generate a random lateral
+                    a = Math.floor(Math.random()*(grid-1)) +1
+                    b = Math.floor(Math.random()*(grid)) 
+                    if(Math.random()<0.5){
+                        //vertical crease
+                        v1 = new Vertex(a,b),
+                        v2 = new Vertex(a,b+1)
+                    } else{
+                        //horizontal crease
+                        v1 = new Vertex(b,a),
+                        v2 = new Vertex(b+1,a)
+                    }
+                }
+                //now that the vertices of this new crease are set, see if these vertices exist or need to be added
+                v1exists = false
+                v2exists = false
+                for(i = 0; i<vertices.length; i++){
+                    if(vertices[i].x == v1.x && vertices[i].y == v1.y){
+                        v1 = vertices[i]
+                        v1exists = true
+                    }
+                    if(vertices[i].x == v2.x && vertices[i].y == v2.y){
+                        v2 = vertices[i]
+                        v2exists = true
+                    }
+                }
+                if(!v1exists){
+                    vertices.push(v1)
+                }
+                if(!v2exists){
+                    vertices.push(v2)
+                }
+                crease = new Crease(v1,v2)
+                //check to see if such a crease already exists
+                for(var i = 0; i<creases.length; i++){
+                    if(creases[i].vertices.includes(crease.vertices[0]) && creases[i].vertices.includes(crease.vertices[1])){
+                        //if this crease has already been done before. Also, if the crease already exists, then the vertices should already exist
+                        i = i-1;
+                        continue mainloop
+                    }
+                }
+                creases.push(crease)
+                crease.vertices[0].connectedCreases.push(crease)
+                crease.vertices[1].connectedCreases.push(crease)
+            }
+        }
+        
+        function step2(){
+            /*
+            Begin to fill in creases based on the ones generated in step 1.
+            The first rule (2a): at vertices which diagonals aren't allowed, make sure they are flat foldable (have exactly 2 or 4 lateral creases)
+            The second rule (2b): at vertices with an odd number of creases and with an angle >= 180, use flat foldability rules to find the guaranteed last crease
+            Repeat the first and second rule until there are no more changes (ie, all vertices are ok, or we need step 3)
+            */
+           step2a()
+           step2b()
+        }
+        function step2a(){
+            for(var i = 0; i<vertices.length;i++){
+                if((vertices[i].x + vertices[i].y)%2==1 && vertices[i].connectedCreases.length!=4 && vertices[i].x>0 && vertices[i].x<grid && vertices[i].y>0 && vertices[i].y<grid){
+                    //If the vertex is on a spot with no diagonals (ie, x + y is odd), has 1, 2, or 3 creases, and is not on the border
+                    console.log(vertices[i])
+                    vertices[i].getCreasesAsVectors()
+                    if(vertices[i].vectors.length==1){
+                        //If there is only one crease on this vertex, add a crease in the opposite direction
+                        v2 = new Vertex(vertices[i].x-vertices[i].vectors[0][0],vertices[i].y-vertices[i].vectors[0][1])
+                        //Check if this new vertex on the other side exists or not already, then add the crease
+                        v2exists = false
+                        for(j = 0; j<vertices.length; j++){
+                            if(vertices[j].x == v2.x && vertices[j].y == v2.y){
+                                v2 = vertices[j]
+                                v2exists = true
+                            }
+                        }
+                        if(!v2exists){vertices.push(v2)}
+                        creases.push(new Crease(vertices[i],v2))
+                        continue
+                    }
+                    if(vertices[i].vectors.length==2 && !(vertices[i].vectors[0][0]==-1*vertices[i].vectors[1][0] && vertices[i].vectors[0][1]==-1*vertices[i].vectors[1][1])){
+                        //If there are two vectors on this vertex, and they aren't in a line already, add creases in the remaining 2 directions
+                        v1 = new Vertex(vertices[i].x-vertices[i].vectors[0][0],vertices[i].y-vertices[i].vectors[0][1])
+                        v2 = new Vertex(vertices[i].x-vertices[i].vectors[1][0],vertices[i].y-vertices[i].vectors[1][1])
+                        v1exists = false
+                        v2exists = false
+                        for(j = 0; j<vertices.length; j++){
+                            if(vertices[j].x == v1.x && vertices[j].y == v1.y){
+                                v1 = vertices[j]
+                                v1exists = true
+                            }
+                            if(vertices[j].x == v2.x && vertices[j].y == v2.y){
+                                v2 = vertices[j]
+                                v2exists = true
+                            }
+                        }
+                        if(!v1exists){vertices.push(v1)}
+                        if(!v2exists){vertices.push(v2)}
+                        creases.push(new Crease(vertices[i],v1))
+                        creases.push(new Crease(vertices[i],v2))
+                        continue
+                    }
+                    if(vertices[i].vectors.length==3){
+                        //if there are 3 vectors on this vertex, add a crease in the remaining direction
+                        //The remaining direction will be in the opposite direction of the sum of the vectors
+                        sumx = vertices[i].vectors[0][0]+vertices[i].vectors[1][0]+vertices[i].vectors[2][0]
+                        sumy = vertices[i].vectors[0][1]+vertices[i].vectors[1][1]+vertices[i].vectors[2][1]
+                        v2 = new Vertex(vertices[i].x-sumx,vertices[i].y-sumy)
+                        //Check if this new vertex on the other side exists or not already, then add the crease
+                        v2exists = false
+                        for(j = 0; j<vertices.length; j++){
+                            if(vertices[j].x == v2.x && vertices[j].y == v2.y){
+                                v2 = vertices[j]
+                                v2exists = true
+                            }
+                        }
+                        if(!v2exists){vertices.push(v2)}
+                        creases.push(new Crease(vertices[i],v2))
+                        console.log(vertices[i],'here 3 vertex')
+                        continue
+                    }
+                }
+            }
+        }
+        function step2b(){
+            for(var i = 0; i<vertices.length;i++){
+                if(vertices[i].connectedCreases.length%2==1){
+                    vertices[i].getCreasesAsVectors();
+                }
+            }
+            //note: can use list inequalities to find the counterclockwise order of angles
+        }
+
+        function display(){
+            paper.project.clear();
+            var bg = new paper.Path.Rectangle(0,0,400,400);
+            bg.fillColor = 'white';
+
+            var gridlines = new paper.Group();
+            for(i=1; i<grid; i++){
+                line1 = new paper.Path.Line(
+                    new paper.Point(0,i*400/grid),
+                    new paper.Point(400,i*400/grid)
+                )
+                line2 = new paper.Path.Line(
+                    new paper.Point(i*400/grid,0),
+                    new paper.Point(i*400/grid,400)
+                )
+                gridlines.addChild(line1);
+                gridlines.addChild(line2);
+            }
+            gridlines.strokeColor = '#E0E0E0'
+            gridlines.strokeWidth = 1
+
+            scale = 400/grid
+            var creaselines = new paper.Group();
+            for(i=0;i<creases.length;i++){
+                line = new paper.Path.Line(
+                    new paper.Point(creases[i].vertices[0].x*scale,creases[i].vertices[0].y*scale),
+                    new paper.Point(creases[i].vertices[1].x*scale,creases[i].vertices[1].y*scale)
+                )
+                line.strokeColor = creases[i].mv 
+                creaselines.addChild(line);
+            }
+            creaselines.strokeWidth = 2
+
+            var border = new paper.Path.Rectangle(0,0,400,400);
+            border.strokeColor = 'black';
+            border.strokeWidth = 4;
+        }
+        function download(){
+            console.log('download .cp file')
+        }
+
+    </script>
+    <div>
+        <button type = button onclick="generate()">Generate random cp</button>
+        <br>
+        <button type = button onclick="download()">Save as .cp file</button>   
+    </div> 
+</body>
+</html>
