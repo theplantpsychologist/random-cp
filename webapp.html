@@ -4,15 +4,15 @@
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>testing</title>
+    <title>Random Cp</title>
 </head>
 <body>
     <h1>Random Cp Generator</h1>
     <div>
-        <p>Grid size: (recommended 4-32)</p>
-        <input type="text" id="gridsize" value="6">
+        <p>Grid size: (recommended 4-16)</p>
+        <input type="text" id="gridsize" value="4">
         <br>
-        <p>Initial crease density (recommended 0.05-0.5)</p><input type="text" id="creasedensity" value = "0.4">
+        <p>Initial crease density (recommended ~0.2)</p><input type="text" id="creasedensity" value = "0.2">
     </div>
     <br>
     <canvas id="square" width="400" height = "400"></canvas>
@@ -36,12 +36,17 @@
                 //takes the creases connected to this vertex and returns them as a list of vectors with this vertex as origin
                 //useful for flat foldability calculations, finding angles and whatnot
                 this.vectors = []
-                for(var i = 0; i<this.connectedCreases.length;i++){
+                this.vectors = this.connectedCreases.map(v => v.vertices[1]==this ? 
+                    [v.vertices[0].x-this.x,v.vertices[0].y-this.y]:[v.vertices[1].x-this.x,v.vertices[1].y-this.y])
+                /*for(var i = 0; i<this.connectedCreases.length;i++){
                     if(this.connectedCreases[i].vertices[1]==this){ 
                         var otherp = this.connectedCreases[i].vertices[0]
                     } else {var otherp = this.connectedCreases[i].vertices[1]}
                     this.vectors.push([otherp.x-this.x,otherp.y-this.y])
-                }
+                } */
+            }
+            getAngles(){
+                this.angles = this.vectors.map(v => Math.atan2(v[1],v[0])).sort(function(a,b){return a-b})
             }
         }
         class Crease {
@@ -54,6 +59,7 @@
         function generate(){
             creases = []
             vertices = []
+            invalid = []
             grid = parseInt(gridsize.value)
             density = parseFloat(creasedensity.value)
             if(density>1 || density<0 || grid<1){
@@ -76,7 +82,7 @@
             First decide whether the random crease will be diagonal or lateral
             if diagonal, pick 2 random numbers, both from [0,n-1] and those will be the coords of the diagonal
             if lateral, pick random from [1,n-1] to decide line, and [1,n] to decide segment of the line, then [0,1] to decide horizontal or vertical
-            if this crease is already added, generate again.
+            if this crease is already added, choose again.
             */
             initialCreaseNumber = Math.floor(density*(3*grid**2-2*grid))
             mainloop: for(var i = 0; i< initialCreaseNumber; i++){
@@ -149,14 +155,43 @@
             The second rule (2b): at vertices with an odd number of creases and with an angle >= 180, use flat foldability rules to find the guaranteed last crease
             Repeat the first and second rule until there are no more changes (ie, all vertices are ok, or we need step 3)
             */
+           length0 = creases.length
+           invalids = findInvalids(vertices)
            step2a()
-           step2b()
+           step2b() //step 2a will be mixed into step 2b
+           lengthf = creases.length
+           /*
+           if(length0<lengthf){
+               //If something changed, go back to step 2a to try to fix more stuff
+               step2()
+           } else if (length0 == lengthf){
+               //If there was no change, it's time to move on 
+               return
+               //I don't think this block is necessary
+           }
+           */
+        }
+        function findInvalids(vertices){
+            invalids = []
+            for(i=0;i<vertices.length;i++){
+                vertices[i].getCreasesAsVectors()
+                vertices[i].getAngles()
+                if(
+                    ![vertices[i].x,vertices[i].y].includes(0) && //if it's not on the edge,
+                    ![vertices[i].x,vertices[i].y].includes(grid)&&
+                        (vertices[i].connectedCreases.length%2==1 || //and there's either an odd number of creases,
+                        Math.abs(vertices[i].angles.map((element,index) => {return element*(index%2 *2 -1)}).reduce((acc,cur)=> acc+cur))!=Math.PI)//or the sum of every other angle is not 180,
+                ){
+                    invalids.push(vertices[i])
+                }
+            }
+            return invalids
         }
         function step2a(){
+            console.log('step 2a')
             for(var i = 0; i<vertices.length;i++){
-                if((vertices[i].x + vertices[i].y)%2==1 && vertices[i].connectedCreases.length!=4 && vertices[i].x>0 && vertices[i].x<grid && vertices[i].y>0 && vertices[i].y<grid){
+                if((vertices[i].x + vertices[i].y)%2==1 && vertices[i].connectedCreases.length!=4 && ![vertices[i].x,vertices[i].y].includes(0) && ![vertices[i].x,vertices[i].y].includes(grid)){
                     //If the vertex is on a spot with no diagonals (ie, x + y is odd), has 1, 2, or 3 creases, and is not on the border
-                    console.log(vertices[i])
                     vertices[i].getCreasesAsVectors()
                     if(vertices[i].vectors.length==1){
                         //If there is only one crease on this vertex, add a crease in the opposite direction
@@ -170,7 +205,10 @@
                             }
                         }
                         if(!v2exists){vertices.push(v2)}
-                        creases.push(new Crease(vertices[i],v2))
+                        crease = new Crease(vertices[i],v2)
+                        creases.push(crease)
+                        vertices[i].connectedCreases.push(crease)
+                        v2.connectedCreases.push(crease)
                         continue
                     }
                     if(vertices[i].vectors.length==2 && !(vertices[i].vectors[0][0]==-1*vertices[i].vectors[1][0] && vertices[i].vectors[0][1]==-1*vertices[i].vectors[1][1])){
@@ -191,15 +229,19 @@
                         }
                         if(!v1exists){vertices.push(v1)}
                         if(!v2exists){vertices.push(v2)}
-                        creases.push(new Crease(vertices[i],v1))
-                        creases.push(new Crease(vertices[i],v2))
+                        crease1 = new Crease(vertices[i],v1)
+                        crease2 = new Crease(vertices[i],v2)
+                        creases.push(crease1,crease2)
+                        vertices[i].connectedCreases.push(crease1,crease2)
+                        v1.connectedCreases.push(crease1)
+                        v2.connectedCreases.push(crease2)
                         continue
                     }
                     if(vertices[i].vectors.length==3){
                         //if there are 3 vectors on this vertex, add a crease in the remaining direction
                         //The remaining direction will be in the opposite direction of the sum of the vectors
-                        sumx = vertices[i].vectors[0][0]+vertices[i].vectors[1][0]+vertices[i].vectors[2][0]
-                        sumy = vertices[i].vectors[0][1]+vertices[i].vectors[1][1]+vertices[i].vectors[2][1]
+                        sumx = vertices[i].vectors.map(v => v[0]).reduce((acc,cur) => acc+cur)
+                        sumy = vertices[i].vectors.map(v => v[1]).reduce((acc,cur) => acc+cur)
                         v2 = new Vertex(vertices[i].x-sumx,vertices[i].y-sumy)
                         //Check if this new vertex on the other side exists or not already, then add the crease
                         v2exists = false
@@ -210,8 +252,10 @@
                             }
                         }
                         if(!v2exists){vertices.push(v2)}
-                        creases.push(new Crease(vertices[i],v2))
-                        console.log(vertices[i],'here 3 vertex')
+                        crease = new Crease(vertices[i],v2)
+                        creases.push(crease)
+                        vertices[i].connectedCreases.push(crease)
+                        v2.connectedCreases.push(crease)
                         continue
                     }
                 }
@@ -219,8 +263,68 @@
         }
         function step2b(){
             for(var i = 0; i<vertices.length;i++){
-                if(vertices[i].connectedCreases.length%2==1){
+                //Now find if there's any angle that is greater than or equal to 180.
+                //if there's 7 creases on the vertex, it will be the last angle to make it all 8
+                //If there's 5 creases on the vertex and an angle = 180, it will bisect the 180 angle
+                //If there's 3 creases on the vertex and an angle >= 180, it will be based on the position of the smaller angles
+                //If there's 1 crease on the vertex: extend it
+                //We start with the 7 vertex bc those are guaranteed, then go down the line. the 1 vertex might get added new stuff
+                //Other stuff like the 3 and 5 vertices might be guaranteed, but if another vertex adds something to it, then it could change
+                //step2a();
+                if(vertices[i].connectedCreases.length==7){
+                    //when there are 7 creases, the 8th will be opposite the direction of the sum of the 7 vectors
                     vertices[i].getCreasesAsVectors();
+                    sumx = vertices[i].vectors.map(v => v[0]).reduce((acc,cur) => acc+cur)
+                    sumy = vertices[i].vectors.map(v => v[1]).reduce((acc,cur) => acc+cur)
+
+                    v2 = new Vertex(vertices[i].x-sumx,vertices[i].y-sumy)
+                    v2exists = false
+                    for(j = 0; j<vertices.length; j++){
+                        if(vertices[j].x == v2.x && vertices[j].y == v2.y){
+                            v2 = vertices[j]
+                            v2exists = true
+                        }
+                    }
+                    if(!v2exists){vertices.push(v2)}
+                    crease = new Crease(vertices[i],v2)
+                    creases.push(crease)
+                    vertices[i].connectedCreases.push(crease)
+                    v2.connectedCreases.push(crease)
+
+                    console.log(vertices[i],'fixed 7')
+                    continue
+                }
+                //step2a();
+                if(vertices[i].connectedCreases.length==5){
+                    vertices[i].getCreasesAsVectors();
+                    //There are 5 unique cases, 4 of them have only one possible crease, and the other has 3.
+                    console.log('fixing a 5', vertices[i])
+                }
+                //step2a();
+                if(vertices[i].connectedCreases.length==3){
+                    vertices[i].getCreasesAsVectors();
+                    //There are 5 unique cases, 4 of them have only one possible crease, and the other has 3
+                }
+                //step2a();
+                if(false && vertices[i].connectedCreases.length==1){
+                    //If there is only one crease on this vertex, add a crease in the opposite direction
+                    console.log('fixing a 1')
+                    vertices[i].getCreasesAsVectors();
+                    v2 = new Vertex(vertices[i].x-vertices[i].vectors[0][0],vertices[i].y-vertices[i].vectors[0][1])
+                    //Check if this new vertex on the other side exists or not already, then add the crease
+                    v2exists = false
+                    for(j = 0; j<vertices.length; j++){
+                        if(vertices[j].x == v2.x && vertices[j].y == v2.y){
+                            v2 = vertices[j]
+                            v2exists = true
+                        }
+                    }
+                    if(!v2exists){vertices.push(v2)}
+                    crease = new Crease(vertices[i],v2)
+                    creases.push(crease)
+                    vertices[i].connectedCreases.push(crease)
+                    v2.connectedCreases.push(crease)
+                    continue
                 }
             }
             //note: can use list inequalities to find the counterclockwise order of angles
@@ -230,16 +334,17 @@
             paper.project.clear();
             var bg = new paper.Path.Rectangle(0,0,400,400);
             bg.fillColor = 'white';
+            scale = 400/grid //ratio of pixels to grid units
 
             var gridlines = new paper.Group();
             for(i=1; i<grid; i++){
                 line1 = new paper.Path.Line(
-                    new paper.Point(0,i*400/grid),
-                    new paper.Point(400,i*400/grid)
+                    new paper.Point(0,i*scale),
+                    new paper.Point(400,i*scale)
                 )
                 line2 = new paper.Path.Line(
-                    new paper.Point(i*400/grid,0),
-                    new paper.Point(i*400/grid,400)
+                    new paper.Point(i*scale,0),
+                    new paper.Point(i*scale,400)
                 )
                 gridlines.addChild(line1);
                 gridlines.addChild(line2);
@@ -247,7 +352,6 @@
             gridlines.strokeColor = '#E0E0E0'
             gridlines.strokeWidth = 1
 
-            scale = 400/grid
             var creaselines = new paper.Group();
             for(i=0;i<creases.length;i++){
                 line = new paper.Path.Line(
@@ -259,10 +363,22 @@
             }
             creaselines.strokeWidth = 2
 
+            invalids = findInvalids(vertices)
+            for(i=0;i<invalids.length;i++){
+                new paper.Path.Circle({
+                    center: new paper.Point(invalids[i].x*scale,invalids[i].y*scale),
+                    radius: scale/3,
+                    opacity: 0.5,
+                    fillColor: 'purple'
+                })
+            }
+
             var border = new paper.Path.Rectangle(0,0,400,400);
             border.strokeColor = 'black';
             border.strokeWidth = 4;
         }
+
+
         function download(){
             console.log('download .cp file')
         }
@@ -274,4 +390,4 @@
         <button type = button onclick="download()">Save as .cp file</button>   
     </div> 
 </body>
-</html>
+</html> 
